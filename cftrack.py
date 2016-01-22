@@ -37,7 +37,7 @@ class allPrefs:
         return repoDir
 
 def trueFalseInput(promptString):
-    isIn= raw_input(promptString)
+    isIn = raw_input(promptString)
     while (True):
         if (isIn[0] == 'y'):
             return True
@@ -119,17 +119,17 @@ class Add(Command):
             subRepo = git.Repo.init(repoDir)
         
             shutil.copy2(self.path, repoDir)
+            self.cfdb.commit()
             subIndex = subRepo.index
             subIndex.add([self.onFile.name])
             subIndex.commit('Added configFile %s' % self.path)
     
-            self.mainRepo.index.add([repoDir+self.onFile.name, self.prefs['dbPath']])
+            self.mainRepo.index.add([repoDir+self.onFile.name, self.curPref.prefs['dbPath']]) 
             self.mainRepo.index.commit('Started tracking %s' % repoName) 
-            self.cfdb.commit()
             print "Added config file %s" % self.onFile.name
 
         except:
-            self.cur.execute("DELETE FROM tracked WHERE path = ?" % self.path) 
+            self.cur.execute("DELETE FROM tracked WHERE path = ?", (self.path,)) 
             self.cfdb.commit()
             raise
 
@@ -168,7 +168,19 @@ class Update(Command):
 
 class Remove(Command):
     def execute(self):
-        pass
+        repoName = self.cur.execute("SELECT repoName FROM tracked WHERE path = ?", (self.path,)).fetchone()[0]
+        if repoName != None:
+            repoDir = self.curPref.makeRepoDir(repoName+'/')
+            if os.path.exists(repoDir):
+                shutil.rmtree(repoDir)
+
+            self.mainRepo.index.add([self.curPref.prefs['dbPath']]) 
+
+        self.cur.execute("DELETE FROM tracked WHERE path = ?", (self.path,))
+        self.cfdb.commit()
+
+        self.mainRepo.index.commit('Deleted %s' % repoName)
+        print 'No longer tracking ' + self.onFile.name
 
 class CmdAction(argparse.Action):
     'This is action creates a command class using the values'
