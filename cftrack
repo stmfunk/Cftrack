@@ -183,6 +183,21 @@ class Remove(Command):
         self.mainRepo.index.commit('Deleted %s' % repoName)
         print 'No longer tracking ' + self.onFile.name
 
+
+class Rollback(Command):
+    def execute(self):
+        repoName = self.cur.execute("SELECT repoName FROM tracked WHERE path = ?", (self.path,)).fetchone()[0]
+        if repoName != None:
+            repoDir = self.curPref.makeRepoDir(repoName+'/')
+            self.subRepo =  git.Repo(repoDir)
+        
+        past_branch = self.subRepo.create_head('past_branch', 'HEAD~1')
+        self.subRepo.head.reference = past_branch
+        self.subRepo.head.reset(index=True, working_tree=True)
+
+        print 'No longer tracking ' + self.onFile.name
+
+
 class CmdAction(argparse.Action):
     'This is action creates a command class using the values'
     def __call__(self, parser, namespace, values, option_string=None):
@@ -198,6 +213,7 @@ class CmdAction(argparse.Action):
             cmd = namespace.obj(values)
             cmd.execute()
         namespace.file = values
+
 
 
 def main():
@@ -217,6 +233,10 @@ def main():
         rmCmd = subParsers.add_parser('rm', help='update specified files (leave empty for all)')
         rmCmd.add_argument('file', help='path to config file to be tracked', type=file, action=CmdAction)
         rmCmd.set_defaults(obj=Remove)
+
+        rlCmd = subParsers.add_parser('rollback', help='revert to previous file version')
+        rlCmd.add_argument('file', help='path to config file to be tracked', type=file, action=CmdAction)
+        rlCmd.set_defaults(obj=Rollback)
 
         args = parser.parse_args()
 
