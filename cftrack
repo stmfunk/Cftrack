@@ -17,7 +17,7 @@ def cmdType(cmd, onFile):
     if cmd.lower().strip() == 'add':
         return Add(onFile)
 
-class allPrefs:
+class AllPrefs:
     'Object containing all preferences and files'
     def __init__(self, cftrc=False, withPrefs=False):
         if withPrefs:
@@ -36,6 +36,11 @@ class allPrefs:
         if not os.path.exists(repoDir):
             os.mkdir(self.prefs['dataPath']+name)
         return repoDir
+
+class Log:
+    commitId = None
+    date = None
+    tag = None
 
 def trueFalseInput(promptString):
     isIn = raw_input(promptString)
@@ -63,7 +68,7 @@ class Command:
         self.onFile = onFile
         try:
             cftrc = open(os.path.expanduser('~')+'/.cftrc', 'r')
-            self.curPref = allPrefs(cftrc)
+            self.curPref = AllPrefs(cftrc)
         except IOError:
             if (trueFalseInput('No configuration file detected: \nCreate one now? y/n: ')):
                 print 'Creating conf file at ~/.cftrc'
@@ -75,12 +80,12 @@ class Command:
                     prefs['dbPath'] = dbPath
                     prefs['dataPath'] = dataPath
 
-                    self.curPref = allPrefs(withPrefs=prefs)
+                    self.curPref = AllPrefs(withPrefs=prefs)
 
                     self.curPref.writeOut(cftrc)
 
                 else:
-                    self.curPref = allPrefs()
+                    self.curPref = AllPrefs()
 
 
         self.mainRepo = git.Repo.init(self.curPref.prefs['dataPath'])
@@ -197,6 +202,36 @@ class Rollback(Command):
 
         print 'No longer tracking ' + self.onFile.name
 
+class List(Command):
+    def subLog(self, subRepo):
+        log = subRepo.git.log().split('\n')
+        logEntries = []
+        midLog = False
+        curLog = None
+        for line in log:
+            if line.startswith('commit'):
+                curLog = Log()
+                logEntries.append(curLog)
+                midLog = True
+                
+                curLog.commitId = line.split(' ')[1]
+
+            elif line.startswith('Date:'):
+                curLog.date = line[5:].strip()
+                midLog = False
+
+        return logEntries
+
+    def execute(self):
+        repoName = self.cur.execute("SELECT repoName FROM tracked WHERE path = ?", (self.path,)).fetchone()[0]
+        if repoName != None:
+            repoDir = self.curPref.makeRepoDir(repoName+'/')
+            self.subRepo =  git.Repo(repoDir)
+
+            print 'Modifications in reverse order:'
+            for line in self.subLog(self.subRepo):
+                print '* '+line.date
+
 
 class CmdAction(argparse.Action):
     'This is action creates a command class using the values'
@@ -237,6 +272,11 @@ def main():
         rlCmd = subParsers.add_parser('rollback', help='revert to previous file version')
         rlCmd.add_argument('file', help='path to config file to be tracked', type=file, action=CmdAction)
         rlCmd.set_defaults(obj=Rollback)
+
+        lsCmd = subParsers.add_parser('list', help='list all changes made to file')
+        lsCmd.add_argument('file', help='path to config file to be tracked', type=file, action=CmdAction)
+        lsCmd.set_defaults(obj=List)
+
 
         args = parser.parse_args()
 
