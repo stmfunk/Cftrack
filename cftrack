@@ -7,6 +7,7 @@ import git
 import os
 import shutil
 import argparse
+import pytz
 import yaml
 from dateutil.parser import parse as dateParser
 
@@ -226,16 +227,34 @@ class Rollback(Command):
             repoDir = self.curPref.makeRepoDir(repoName+'/')
             self.subRepo =  git.Repo(repoDir)
             log = self.subLog(self.subRepo)
-                
-            self.subRepo.git.checkout(log[1].commitId, self.onFile.name)
+            rollTo = log[1]
+	                
+            if args != None and args.date != None:
+                givenDate = dateParser(args.date)           
+                foundMatch = False
+                for entry in log:
+                    if givenDate.tzinfo == None:
+                        givenDate = givenDate.replace(tzinfo=dateParser(entry.date).tzinfo)
+                    if givenDate == dateParser(entry.date):
+                        rollTo = entry
+                        foundMatch = True
+                        break
+                if not foundMatch:
+                    print 'No entry on given date'
+                    exit(2)
 
-            subIndex = self.subRepo.index 
-            subIndex.add([self.onFile.name]) 
-            subIndex.commit('Rolled back configFile %s' % self.path)
-
-            shutil.copy2(repoDir+self.onFile.name, self.path)
-            self.mainRepo.index.add([repoDir+self.onFile.name])
-            self.mainRepo.index.commit('Rolled back %s' % repoName)
+	        self.subRepo.git.checkout(rollTo.commitId, self.onFile.name)
+	
+	        subIndex = self.subRepo.index 
+	        subIndex.add([self.onFile.name]) 
+	        subIndex.commit('Rolled back configFile %s' % self.path)
+	
+	        shutil.copy2(repoDir+self.onFile.name, self.path)
+	        self.mainRepo.index.add([repoDir+self.onFile.name])
+	        self.mainRepo.index.commit('Rolled back %s' % repoName)
+	        print 'Rolled %s back to update made on %s' % (self.onFile.name, rollTo.date)
+        else:
+            print 'Not tracking %s' % self.onFile.name
 
 
 class CmdAction(argparse.Action):
