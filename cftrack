@@ -8,6 +8,7 @@ import os
 import shutil
 import argparse
 import yaml
+from dateutil.parser import parse as dateParser
 
 def cmdType(cmd, onFile):
     if cmd.lower().strip() == 'rm':
@@ -61,7 +62,6 @@ def ensure(path):
     return path
 
 
-
 class Command:
     'Command subclass'
     def __init__(self, onFile):
@@ -96,6 +96,25 @@ class Command:
 
         if not self.onFile == None:
             self.path = os.path.abspath(self.onFile.name)
+
+    def subLog(self, subRepo):
+        log = subRepo.git.log().split('\n')
+        logEntries = []
+        midLog = False
+        curLog = None
+        for line in log:
+            if line.startswith('commit'):
+                curLog = Log()
+                logEntries.append(curLog)
+                midLog = True
+                
+                curLog.commitId = line.split(' ')[1]
+
+            elif line.startswith('Date:'):
+                curLog.date = line[5:].strip()
+                midLog = False
+
+        return logEntries
     
     def execute(self):
         pass
@@ -189,39 +208,7 @@ class Remove(Command):
         print 'No longer tracking ' + self.onFile.name
 
 
-class Rollback(Command):
-    def execute(self):
-        repoName = self.cur.execute("SELECT repoName FROM tracked WHERE path = ?", (self.path,)).fetchone()[0]
-        if repoName != None:
-            repoDir = self.curPref.makeRepoDir(repoName+'/')
-            self.subRepo =  git.Repo(repoDir)
-        
-        past_branch = self.subRepo.create_head('past_branch', 'HEAD~1')
-        self.subRepo.head.reference = past_branch
-        self.subRepo.head.reset(index=True, working_tree=True)
-
-        print 'No longer tracking ' + self.onFile.name
-
 class List(Command):
-    def subLog(self, subRepo):
-        log = subRepo.git.log().split('\n')
-        logEntries = []
-        midLog = False
-        curLog = None
-        for line in log:
-            if line.startswith('commit'):
-                curLog = Log()
-                logEntries.append(curLog)
-                midLog = True
-                
-                curLog.commitId = line.split(' ')[1]
-
-            elif line.startswith('Date:'):
-                curLog.date = line[5:].strip()
-                midLog = False
-
-        return logEntries
-
     def execute(self):
         repoName = self.cur.execute("SELECT repoName FROM tracked WHERE path = ?", (self.path,)).fetchone()[0]
         if repoName != None:
@@ -231,6 +218,24 @@ class List(Command):
             print 'Modifications in reverse order:'
             for line in self.subLog(self.subRepo):
                 print '* '+line.date
+
+class Rollback(Command):
+    def execute(self, args=None):
+        repoName = self.cur.execute("SELECT repoName FROM tracked WHERE path = ?", (self.path,)).fetchone()[0]
+        if repoName != None:
+            repoDir = self.curPref.makeRepoDir(repoName+'/')
+            self.subRepo =  git.Repo(repoDir)
+            log = self.subLog(self.subRepo)
+                
+            self.subRepo.git.checkout(log[1].commitId, self.onFile.name)
+
+            subIndex = self.subRepo.index 
+            subIndex.add([self.onFile.name]) 
+            subIndex.commit('Rolled back configFile %s' % self.path)
+
+            shutil.copy2(repoDir+self.onFile.name, self.path)
+            self.mainRepo.index.add([repoDir+self.onFile.name])
+            self.mainRepo.index.commit('Rolled back %s' % repoName)
 
 
 class CmdAction(argparse.Action):
@@ -249,6 +254,12 @@ class CmdAction(argparse.Action):
             cmd.execute()
         namespace.file = values
 
+def void(args):
+     pass
+
+def rollback(args):
+     cmdRl = Rollback(args.file)
+     cmdRl.execute(args)
 
 
 def main():
@@ -258,32 +269,32 @@ def main():
 
         addCmd = subParsers.add_parser('add', help='add a new file to be tracked')
         addCmd.add_argument('file', help='path to config file to be tracked', nargs='+', type=file, action=CmdAction)
-        addCmd.set_defaults(obj=Add)
+        addCmd.set_defaults(obj=Add, func=void)
 
 
         updateCmd = subParsers.add_parser('update', help='update specified files (leave empty for all)')
         updateCmd.add_argument('file', help='path to config file to be tracked', nargs='*',  type=file, action=CmdAction)
-        updateCmd.set_defaults(obj=Update)
+        updateCmd.set_defaults(obj=Update, func=void)
 
         rmCmd = subParsers.add_parser('rm', help='update specified files (leave empty for all)')
         rmCmd.add_argument('file', help='path to config file to be tracked', type=file, action=CmdAction)
-        rmCmd.set_defaults(obj=Remove)
+        rmCmd.set_defaults(obj=Remove, func=void)
 
         rlCmd = subParsers.add_parser('rollback', help='revert to previous file version')
-        rlCmd.add_argument('file', help='path to config file to be tracked', type=file, action=CmdAction)
-        rlCmd.set_defaults(obj=Rollback)
+        rlCmd.add_argument('file', help='path to config file to be tracked', type=file)
+        rlCmd.add_argument('-d', '--date', type=str, help='rollback changes to changes made on date')
+        rlCmd.set_defaults(func=rollback)
 
         lsCmd = subParsers.add_parser('list', help='list all changes made to file')
         lsCmd.add_argument('file', help='path to config file to be tracked', type=file, action=CmdAction)
-        lsCmd.set_defaults(obj=List)
-
+        lsCmd.set_defaults(obj=List, func=void)
 
         args = parser.parse_args()
+        args.func(args)
 
     except IOError as io:
         sys.stderr.write('No such file or directory: %s\n' % io.filename)
         exit(1)
-
 
            
 if __name__ == '__main__':
