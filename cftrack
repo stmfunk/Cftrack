@@ -231,17 +231,15 @@ class Rollback(Command):
 	                
             if args != None and args.date != None:
                 givenDate = dateParser(args.date)           
-                foundMatch = False
+
+                if givenDate.tzinfo == None:
+                    givenDate = givenDate.replace(tzinfo=dateParser(log[1].date).tzinfo)
+                    dif = abs(givenDate - dateParser(log[1].date))
+
                 for entry in log:
-                    if givenDate.tzinfo == None:
-                        givenDate = givenDate.replace(tzinfo=dateParser(entry.date).tzinfo)
-                    if givenDate == dateParser(entry.date):
+                    if dif > abs(givenDate - dateParser(entry.date)):
+                        dif = abs(givenDate - dateParser(entry.date))
                         rollTo = entry
-                        foundMatch = True
-                        break
-                if not foundMatch:
-                    print 'No entry on given date'
-                    exit(2)
 
 	        self.subRepo.git.checkout(rollTo.commitId, self.onFile.name)
 	
